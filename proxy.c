@@ -12,15 +12,7 @@
 
 #include "csapp.h"
 
-/*
- * My constants for identification
- */
-
 #define PROXYFILE "proxy.log"
-
-//static const char *myAgent = "Mozilla/5.0 (X11; Linux x86_64; rv:28.0) Gecko/20100101 Firefox/28.0\r\n";
-//static const char *myEncoding = "gzip, deflate\r\n";
-//static const char *myAccept = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8\r\n";
 
 // Create struct to hold info about our client.
 // Contains file descriptor and client ip address.
