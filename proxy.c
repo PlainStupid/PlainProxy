@@ -16,7 +16,7 @@
  * My constants for identification
  */
 
-#define PROXYFILE "proxylab.log"
+#define PROXYFILE "proxy.log"
 
 //static const char *myAgent = "Mozilla/5.0 (X11; Linux x86_64; rv:28.0) Gecko/20100101 Firefox/28.0\r\n";
 //static const char *myEncoding = "gzip, deflate\r\n";
@@ -56,7 +56,7 @@ int open_clientfd_ts(char *hostname, int portno);
 // Logger which output to a file what uri user is requesting
 void logging( void *myclientp, char *uri, int size);
 
-sem_t logmutex;
+sem_t clientmutex;
 
 /*
  * main - Main routine for the proxy program
@@ -91,7 +91,7 @@ int main(int argc, char **argv)
     listenfd = open_listenfd(port);
 
     // Initialize Semaphore so we can lock the log for each thread
-    sem_init(&logmutex, 1, 1);
+    sem_init(&clientmutex, 1, 1);
 
     //http://stackoverflow.com/questions/108183/how-to-prevent-sigpipes-or-handle-them-properly
     // Ignore broken pipe if we write to socket.
@@ -120,13 +120,13 @@ int main(int argc, char **argv)
 /*
  * A simple thread function which calls deliver()
  * and cleans up afterwards.
+ * To do: Needs checking
  */
 void *thread(void *myclientp)
 {
     struct client_info *myclient = (struct client_info *) myclientp;
 
     Pthread_detach(pthread_self());
-
 
     deliver(myclient);
     Close(myclient->connfd);
@@ -145,7 +145,6 @@ void deliver(void *myclientp)
     int serverfd;
     int tmpport;
 
-    //struct stat sbuf;
     char buf[MAXLINE],
          method[MAXLINE],
          uri[MAXLINE],
@@ -153,25 +152,38 @@ void deliver(void *myclientp)
          hostname[MAXLINE],
          path[MAXLINE];
 
-    rio_t rio;
+    rio_t rio, rioserver;
     struct client_info *myclient = (struct client_info *) myclientp;
 
     Rio_readinitb(&rio, myclient->connfd);
     rio_readlineb(&rio, buf, MAXLINE);
 
-    // Split buf to following chars
+    // Get user header and split it to variables
     sscanf(buf, "%s %s %s", method, uri, version);
 
     // Parse uri to following chars.q
     parse_uri(uri, hostname, path, &tmpport);
 
     // For debugging
-    printf("uri: %s , hostname: %s:%d, path: %s\n", uri, hostname, tmpport, path);
+    printf("Sending > uri: %s , hostname: %s:%d, path: %s\n", uri, hostname, tmpport, path);
 
+    // Open fd for the server request
+    // and initialize the reading from server.
     serverfd = open_clientfd(hostname, tmpport);
+    Rio_readinitb(&rioserver, serverfd);
 
-    logging(myclient, uri, sizeof(uri));
 
+    /*
+     * Add here the loop, request from client to server
+     * and the response from server to client
+     */
+
+
+    // Loop through response
+    // 973
+
+    // MAXLINE is not suppose to be here
+    logging(myclient, uri, MAXLINE);
 
     return;
 }
@@ -233,20 +245,20 @@ void logging( void *myclientp, char *uri, int size)
     struct client_info *myclient = (struct client_info *)myclientp;
 
     // Lock the log so only one thread write to it each time
-    P(&logmutex);
+    P(&clientmutex);
 
     // Format the text for output
     format_log_entry(logs, &myclient->clientaddr, uri, size);
 
+
     // Open PROXYFILE with append sign
     proxylog = Fopen(PROXYFILE, "a");
     Fwrite (logs , 1, strlen(logs), proxylog);
-    Fwrite("\n", 1, 1, proxylog);
     fflush(proxylog);
     Fclose(proxylog);
 
     // Unlock it so everyone has access to it
-    V(&logmutex);
+    V(&clientmutex);
 
     return;
 }
@@ -284,7 +296,7 @@ void format_log_entry(char *logstring, struct sockaddr_in *sockaddr,
 
 
     /* Return the formatted log entry string */
-    sprintf(logstring, "%s: %d.%d.%d.%d %s", time_str, a, b, c, d, uri);
+    sprintf(logstring, "%s: %d.%d.%d.%d %s %d\n", time_str, a, b, c, d, uri, size);
 }
 
 
@@ -320,7 +332,38 @@ void Rio_writen_w(int fd, void *usrbuf, size_t n)
     }
 }
 
+/*
+ * Definitely not done. Only copy/paste of csapp.c
+ * open_clientfd() plus a Malloc.
+ */
 int open_clientfd_ts(char *hostname, int portno)
 {
-    return 0;
+    int clientfd;
+    struct hostent *hp;
+    struct sockaddr_in serveraddr;
+
+    P(&clientmutex);
+    hp = (struct hostent *) Malloc(sizeof(struct hostent));
+
+    if ((clientfd = socket(AF_INET, SOCK_STREAM, 0)) < 0)
+        return -1; /* check errno for cause of error */
+
+    /* Fill in the server's IP address and port */
+    if ((hp = gethostbyname(hostname)) == NULL)
+        return -2; /* check h_errno for cause of error */
+
+    bzero((char *) &serveraddr, sizeof(serveraddr));
+
+    serveraddr.sin_family = AF_INET;
+
+    bcopy((char *)hp->h_addr_list[0],
+          (char *)&serveraddr.sin_addr.s_addr, hp->h_length);
+
+    serveraddr.sin_port = htons(portno);
+
+    /* Establish a connection with the server */
+    if (connect(clientfd, (SA *) &serveraddr, sizeof(serveraddr)) < 0)
+        return -1;
+    V(&clientmutex);
+    return clientfd;
 }
